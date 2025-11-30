@@ -219,7 +219,7 @@
         'Properties': dict({
           'Code': dict({
             'S3Bucket': 'cdk-hnb659fds-assets-123456789012-us-east-1',
-            'S3Key': 'faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6.zip',
+            'S3Key': 'NORMALIZED',
           }),
           'Description': dict({
             'Fn::Join': list([
@@ -426,7 +426,7 @@
         'Properties': dict({
           'Code': dict({
             'S3Bucket': 'cdk-hnb659fds-assets-123456789012-us-east-1',
-            'S3Key': '4c517d3181900322fae449e6ece662c1ee6660374c56d1999807ebab26746d73.zip',
+            'S3Key': 'NORMALIZED',
           }),
           'Environment': dict({
             'Variables': dict({

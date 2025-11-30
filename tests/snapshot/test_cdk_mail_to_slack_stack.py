@@ -1,3 +1,4 @@
+import json
 from typing import Any
 
 import aws_cdk as cdk
@@ -17,11 +18,40 @@ CI_CONFIG: dict[str, str | bool] = {
 }
 
 
+def normalize_template(template: dict[str, Any]) -> dict[str, Any]:
+    """Normalize template by removing dynamic values.
+
+    Removes values that change on every build but don't represent
+    infrastructure changes:
+    - Lambda S3 object keys (code hashes)
+    - Asset hashes in parameters
+    """
+    normalized = json.loads(json.dumps(template))
+
+    # Remove Lambda S3 object keys
+    if "Resources" in normalized:
+        for resource in normalized["Resources"].values():
+            if resource.get("Type") == "AWS::Lambda::Function":
+                if "Properties" in resource and "Code" in resource["Properties"]:
+                    code = resource["Properties"]["Code"]
+                    if "S3Key" in code:
+                        code["S3Key"] = "NORMALIZED"
+
+    # Remove asset hash parameters
+    if "Parameters" in normalized:
+        for param_name, param_value in normalized["Parameters"].items():
+            if "AssetParameters" in param_name and "S3VersionKey" in param_name:
+                param_value["Default"] = "NORMALIZED"
+
+    return normalized
+
+
 def test_snapshot(snapshot: Any) -> None:
     """Test CloudFormation template snapshot.
 
-    This test captures the entire CloudFormation template as a snapshot.
-    If the template changes, the test will fail and show the diff.
+    This test captures the CloudFormation template structure as a snapshot,
+    excluding dynamic values like Lambda code hashes.
+    If the infrastructure changes, the test will fail and show the diff.
     Run `pytest --snapshot-update` to update the snapshot after reviewing changes.
 
     Note: Uses CI_CONFIG to avoid dependency on local config.py
@@ -40,4 +70,5 @@ def test_snapshot(snapshot: Any) -> None:
         env=cdk.Environment(account="123456789012", region="us-east-1"),
     )
     template = Template.from_stack(stack)
-    assert template.to_json() == snapshot
+    normalized = normalize_template(template.to_json())
+    assert normalized == snapshot
