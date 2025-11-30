@@ -42,6 +42,8 @@ jobs:
 
       - name: Run tests with pytest
         run: pytest --cov --cov-report=xml --cov-report=term
+        env:
+          AWS_DEFAULT_REGION: us-east-1
 
       - name: Upload coverage to Codecov
         uses: codecov/codecov-action@v4
