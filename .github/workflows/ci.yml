@@ -25,6 +25,9 @@ jobs:
           pip install -r requirements.txt -r requirements-dev.txt
           npm install -g aws-cdk
 
+      - name: Create config.py for CI
+        run: cp config.py.example config.py
+
       - name: Check code formatting with black
         run: black --check .
 
