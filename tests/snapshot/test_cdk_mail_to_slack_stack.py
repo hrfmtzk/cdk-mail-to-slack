@@ -26,7 +26,7 @@ def normalize_template(template: dict[str, Any]) -> dict[str, Any]:
     - Lambda S3 object keys (code hashes)
     - Asset hashes in parameters
     """
-    normalized = json.loads(json.dumps(template))
+    normalized: dict[str, Any] = json.loads(json.dumps(template))
 
     # Remove Lambda S3 object keys
     if "Resources" in normalized:
@@ -70,5 +70,6 @@ def test_snapshot(snapshot: Any) -> None:
         env=cdk.Environment(account="123456789012", region="us-east-1"),
     )
     template = Template.from_stack(stack)
-    normalized = normalize_template(template.to_json())
+    template_dict = dict(template.to_json())
+    normalized = normalize_template(template_dict)
     assert normalized == snapshot
