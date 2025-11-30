@@ -1,0 +1,934 @@
+# serializer version: 1
+# name: test_snapshot
+  dict({
+    'Metadata': dict({
+      'cdk_nag': dict({
+        'rules_to_suppress': list([
+          dict({
+            'applies_to': list([
+              'Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
+            ]),
+            'id': 'AwsSolutions-IAM4',
+            'reason': 'CDK-generated custom resources require AWSLambdaBasicExecutionRole',
+          }),
+        ]),
+      }),
+    }),
+    'Parameters': dict({
+      'BootstrapVersion': dict({
+        'Default': '/cdk-bootstrap/hnb659fds/version',
+        'Description': 'Version of the CDK Bootstrap resources in this environment, automatically retrieved from SSM Parameter Store. [cdk:skip]',
+        'Type': 'AWS::SSM::Parameter::Value<String>',
+      }),
+    }),
+    'Resources': dict({
+      'BucketNotificationsHandler050a0587b7544547bf325f094a3db8347ECC3691': dict({
+        'DependsOn': list([
+          'BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy2CF63D36',
+          'BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleB6FB88EC',
+        ]),
+        'Properties': dict({
+          'Code': dict({
+            'ZipFile': '''
+              import boto3  # type: ignore
+              import json
+              import logging
+              import urllib.request
+              
+              s3 = boto3.client("s3")
+              
+              EVENTBRIDGE_CONFIGURATION = 'EventBridgeConfiguration'
+              CONFIGURATION_TYPES = ["TopicConfigurations", "QueueConfigurations", "LambdaFunctionConfigurations"]
+              
+              def handler(event: dict, context):
+                response_status = "SUCCESS"
+                error_message = ""
+                try:
+                  props = event["ResourceProperties"]
+                  notification_configuration = props["NotificationConfiguration"]
+                  managed = props.get('Managed', 'true').lower() == 'true'
+                  skipDestinationValidation = props.get('SkipDestinationValidation', 'false').lower() == 'true'
+                  stack_id = event['StackId']
+                  old = event.get("OldResourceProperties", {}).get("NotificationConfiguration", {})
+                  if managed:
+                    config = handle_managed(event["RequestType"], notification_configuration)
+                  else:
+                    config = handle_unmanaged(props["BucketName"], stack_id, event["RequestType"], notification_configuration, old)
+                  s3.put_bucket_notification_configuration(Bucket=props["BucketName"], NotificationConfiguration=config, SkipDestinationValidation=skipDestinationValidation)
+                except Exception as e:
+                  logging.exception("Failed to put bucket notification configuration")
+                  response_status = "FAILED"
+                  error_message = f"Error: {str(e)}. "
+                finally:
+                  submit_response(event, context, response_status, error_message)
+              
+              def handle_managed(request_type, notification_configuration):
+                if request_type == 'Delete':
+                  return {}
+                return notification_configuration
+              
+              def handle_unmanaged(bucket, stack_id, request_type, notification_configuration, old):
+                def get_id(n):
+                  n['Id'] = ''
+                  sorted_notifications = sort_filter_rules(n)
+                  strToHash=json.dumps(sorted_notifications, sort_keys=True).replace('"Name": "prefix"', '"Name": "Prefix"').replace('"Name": "suffix"', '"Name": "Suffix"')
+                  return f"{stack_id}-{hash(strToHash)}"
+                def with_id(n):
+                  n['Id'] = get_id(n)
+                  return n
+              
+                external_notifications = {}
+                existing_notifications = s3.get_bucket_notification_configuration(Bucket=bucket)
+                for t in CONFIGURATION_TYPES:
+                  if request_type == 'Update':
+                      old_incoming_ids = [get_id(n) for n in old.get(t, [])]
+                      external_notifications[t] = [n for n in existing_notifications.get(t, []) if not get_id(n) in old_incoming_ids]      
+                  elif request_type == 'Delete':
+                      external_notifications[t] = [n for n in existing_notifications.get(t, []) if not n['Id'].startswith(f"{stack_id}-")]
+                  elif request_type == 'Create':
+                      external_notifications[t] = [n for n in existing_notifications.get(t, [])]
+                if EVENTBRIDGE_CONFIGURATION in existing_notifications:
+                  external_notifications[EVENTBRIDGE_CONFIGURATION] = existing_notifications[EVENTBRIDGE_CONFIGURATION]
+              
+                if request_type == 'Delete':
+                  return external_notifications
+              
+                notifications = {}
+                for t in CONFIGURATION_TYPES:
+                  external = external_notifications.get(t, [])
+                  incoming = [with_id(n) for n in notification_configuration.get(t, [])]
+                  notifications[t] = external + incoming
+              
+                if EVENTBRIDGE_CONFIGURATION in notification_configuration:
+                  notifications[EVENTBRIDGE_CONFIGURATION] = notification_configuration[EVENTBRIDGE_CONFIGURATION]
+                elif EVENTBRIDGE_CONFIGURATION in external_notifications:
+                  notifications[EVENTBRIDGE_CONFIGURATION] = external_notifications[EVENTBRIDGE_CONFIGURATION]
+              
+                return notifications
+              
+              def submit_response(event: dict, context, response_status: str, error_message: str):
+                response_body = json.dumps(
+                  {
+                    "Status": response_status,
+                    "Reason": f"{error_message}See the details in CloudWatch Log Stream: {context.log_stream_name}",
+                    "PhysicalResourceId": event.get("PhysicalResourceId") or event["LogicalResourceId"],
+                    "StackId": event["StackId"],
+                    "RequestId": event["RequestId"],
+                    "LogicalResourceId": event["LogicalResourceId"],
+                    "NoEcho": False,
+                  }
+                ).encode("utf-8")
+                headers = {"content-type": "", "content-length": str(len(response_body))}
+                try:
+                  req = urllib.request.Request(url=event["ResponseURL"], headers=headers, data=response_body, method="PUT")
+                  with urllib.request.urlopen(req) as response:
+                    print(response.read().decode("utf-8"))
+                  print("Status code: " + response.reason)
+                except Exception as e:
+                    print("send(..) failed executing request.urlopen(..): " + str(e))
+              
+              def sort_filter_rules(json_obj):
+                if not isinstance(json_obj, dict):
+                    return json_obj
+                for key, value in json_obj.items():
+                    if isinstance(value, dict):
+                        json_obj[key] = sort_filter_rules(value)
+                    elif isinstance(value, list):
+                        json_obj[key] = [sort_filter_rules(item) for item in value]
+                if "Filter" in json_obj and "Key" in json_obj["Filter"] and "FilterRules" in json_obj["Filter"]["Key"]:
+                    filter_rules = json_obj["Filter"]["Key"]["FilterRules"]
+                    sorted_filter_rules = sorted(filter_rules, key=lambda x: x["Name"])
+                    json_obj["Filter"]["Key"]["FilterRules"] = sorted_filter_rules
+                return json_obj
+            ''',
+          }),
+          'Description': 'AWS CloudFormation handler for "Custom::S3BucketNotifications" resources (@aws-cdk/aws-s3)',
+          'Handler': 'index.handler',
+          'Role': dict({
+            'Fn::GetAtt': list([
+              'BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleB6FB88EC',
+              'Arn',
+            ]),
+          }),
+          'Runtime': 'python3.13',
+          'Timeout': 300,
+        }),
+        'Type': 'AWS::Lambda::Function',
+      }),
+      'BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleB6FB88EC': dict({
+        'Properties': dict({
+          'AssumeRolePolicyDocument': dict({
+            'Statement': list([
+              dict({
+                'Action': 'sts:AssumeRole',
+                'Effect': 'Allow',
+                'Principal': dict({
+                  'Service': 'lambda.amazonaws.com',
+                }),
+              }),
+            ]),
+            'Version': '2012-10-17',
+          }),
+          'ManagedPolicyArns': list([
+            dict({
+              'Fn::Join': list([
+                '',
+                list([
+                  'arn:',
+                  dict({
+                    'Ref': 'AWS::Partition',
+                  }),
+                  ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
+                ]),
+              ]),
+            }),
+          ]),
+        }),
+        'Type': 'AWS::IAM::Role',
+      }),
+      'BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy2CF63D36': dict({
+        'Properties': dict({
+          'PolicyDocument': dict({
+            'Statement': list([
+              dict({
+                'Action': 's3:PutBucketNotification',
+                'Effect': 'Allow',
+                'Resource': dict({
+                  'Fn::GetAtt': list([
+                    'MailSlackS3Bucket43422984',
+                    'Arn',
+                  ]),
+                }),
+              }),
+            ]),
+            'Version': '2012-10-17',
+          }),
+          'PolicyName': 'BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleDefaultPolicy2CF63D36',
+          'Roles': list([
+            dict({
+              'Ref': 'BucketNotificationsHandler050a0587b7544547bf325f094a3db834RoleB6FB88EC',
+            }),
+          ]),
+        }),
+        'Type': 'AWS::IAM::Policy',
+      }),
+      'CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F': dict({
+        'DependsOn': list([
+          'CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092',
+        ]),
+        'Properties': dict({
+          'Code': dict({
+            'S3Bucket': 'cdk-hnb659fds-assets-123456789012-us-east-1',
+            'S3Key': 'faa95a81ae7d7373f3e1f242268f904eb748d8d0fdd306e8a6fe515a1905a7d6.zip',
+          }),
+          'Description': dict({
+            'Fn::Join': list([
+              '',
+              list([
+                'Lambda function for auto-deleting objects in ',
+                dict({
+                  'Ref': 'MailSlackAccessLogBucket2A4C20AA',
+                }),
+                ' S3 bucket.',
+              ]),
+            ]),
+          }),
+          'Handler': 'index.handler',
+          'MemorySize': 128,
+          'Role': dict({
+            'Fn::GetAtt': list([
+              'CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092',
+              'Arn',
+            ]),
+          }),
+          'Runtime': 'nodejs22.x',
+          'Timeout': 900,
+        }),
+        'Type': 'AWS::Lambda::Function',
+      }),
+      'CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092': dict({
+        'Properties': dict({
+          'AssumeRolePolicyDocument': dict({
+            'Statement': list([
+              dict({
+                'Action': 'sts:AssumeRole',
+                'Effect': 'Allow',
+                'Principal': dict({
+                  'Service': 'lambda.amazonaws.com',
+                }),
+              }),
+            ]),
+            'Version': '2012-10-17',
+          }),
+          'ManagedPolicyArns': list([
+            dict({
+              'Fn::Sub': 'arn:${AWS::Partition}:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
+            }),
+          ]),
+        }),
+        'Type': 'AWS::IAM::Role',
+      }),
+      'MailSlackAccessLogBucket2A4C20AA': dict({
+        'DeletionPolicy': 'Delete',
+        'Properties': dict({
+          'AccessControl': 'LogDeliveryWrite',
+          'BucketEncryption': dict({
+            'ServerSideEncryptionConfiguration': list([
+              dict({
+                'ServerSideEncryptionByDefault': dict({
+                  'SSEAlgorithm': 'AES256',
+                }),
+              }),
+            ]),
+          }),
+          'LifecycleConfiguration': dict({
+            'Rules': list([
+              dict({
+                'ExpirationInDays': 90,
+                'Id': 'DeleteAfter90Days',
+                'Status': 'Enabled',
+              }),
+            ]),
+          }),
+          'OwnershipControls': dict({
+            'Rules': list([
+              dict({
+                'ObjectOwnership': 'ObjectWriter',
+              }),
+            ]),
+          }),
+          'PublicAccessBlockConfiguration': dict({
+            'BlockPublicAcls': True,
+            'BlockPublicPolicy': True,
+            'IgnorePublicAcls': True,
+            'RestrictPublicBuckets': True,
+          }),
+          'Tags': list([
+            dict({
+              'Key': 'aws-cdk:auto-delete-objects',
+              'Value': 'true',
+            }),
+          ]),
+        }),
+        'Type': 'AWS::S3::Bucket',
+        'UpdateReplacePolicy': 'Delete',
+      }),
+      'MailSlackAccessLogBucketAutoDeleteObjectsCustomResource91255869': dict({
+        'DeletionPolicy': 'Delete',
+        'DependsOn': list([
+          'MailSlackAccessLogBucketPolicyCC488A98',
+        ]),
+        'Properties': dict({
+          'BucketName': dict({
+            'Ref': 'MailSlackAccessLogBucket2A4C20AA',
+          }),
+          'ServiceToken': dict({
+            'Fn::GetAtt': list([
+              'CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F',
+              'Arn',
+            ]),
+          }),
+        }),
+        'Type': 'Custom::S3AutoDeleteObjects',
+        'UpdateReplacePolicy': 'Delete',
+      }),
+      'MailSlackAccessLogBucketPolicyCC488A98': dict({
+        'Properties': dict({
+          'Bucket': dict({
+            'Ref': 'MailSlackAccessLogBucket2A4C20AA',
+          }),
+          'PolicyDocument': dict({
+            'Statement': list([
+              dict({
+                'Action': 's3:*',
+                'Condition': dict({
+                  'Bool': dict({
+                    'aws:SecureTransport': 'false',
+                  }),
+                }),
+                'Effect': 'Deny',
+                'Principal': dict({
+                  'AWS': '*',
+                }),
+                'Resource': list([
+                  dict({
+                    'Fn::GetAtt': list([
+                      'MailSlackAccessLogBucket2A4C20AA',
+                      'Arn',
+                    ]),
+                  }),
+                  dict({
+                    'Fn::Join': list([
+                      '',
+                      list([
+                        dict({
+                          'Fn::GetAtt': list([
+                            'MailSlackAccessLogBucket2A4C20AA',
+                            'Arn',
+                          ]),
+                        }),
+                        '/*',
+                      ]),
+                    ]),
+                  }),
+                ]),
+              }),
+              dict({
+                'Action': list([
+                  's3:PutBucketPolicy',
+                  's3:GetBucket*',
+                  's3:List*',
+                  's3:DeleteObject*',
+                ]),
+                'Effect': 'Allow',
+                'Principal': dict({
+                  'AWS': dict({
+                    'Fn::GetAtt': list([
+                      'CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092',
+                      'Arn',
+                    ]),
+                  }),
+                }),
+                'Resource': list([
+                  dict({
+                    'Fn::GetAtt': list([
+                      'MailSlackAccessLogBucket2A4C20AA',
+                      'Arn',
+                    ]),
+                  }),
+                  dict({
+                    'Fn::Join': list([
+                      '',
+                      list([
+                        dict({
+                          'Fn::GetAtt': list([
+                            'MailSlackAccessLogBucket2A4C20AA',
+                            'Arn',
+                          ]),
+                        }),
+                        '/*',
+                      ]),
+                    ]),
+                  }),
+                ]),
+              }),
+            ]),
+            'Version': '2012-10-17',
+          }),
+        }),
+        'Type': 'AWS::S3::BucketPolicy',
+      }),
+      'MailSlackLambdaFunctionA25E2BA2': dict({
+        'DependsOn': list([
+          'MailSlackLambdaFunctionServiceRoleDefaultPolicy02B5E815',
+          'MailSlackLambdaFunctionServiceRole363AFC77',
+        ]),
+        'Properties': dict({
+          'Code': dict({
+            'S3Bucket': 'cdk-hnb659fds-assets-123456789012-us-east-1',
+            'S3Key': '4c517d3181900322fae449e6ece662c1ee6660374c56d1999807ebab26746d73.zip',
+          }),
+          'Environment': dict({
+            'Variables': dict({
+              'DOMAIN_NAME': 'test.example.com',
+              'LOG_LEVEL': 'INFO',
+              'POWERTOOLS_SERVICE_NAME': 'email-to-slack',
+              'SLACK_BOT_TOKEN_SECRET_NAME': 'MailSlack/SlackBotToken',
+              'SLACK_ERROR_CHANNEL': 'errors',
+            }),
+          }),
+          'Handler': 'main.handler',
+          'LoggingConfig': dict({
+            'LogGroup': dict({
+              'Ref': 'MailSlackLambdaLogGroup87F4D2C9',
+            }),
+          }),
+          'MemorySize': 128,
+          'ReservedConcurrentExecutions': 10,
+          'Role': dict({
+            'Fn::GetAtt': list([
+              'MailSlackLambdaFunctionServiceRole363AFC77',
+              'Arn',
+            ]),
+          }),
+          'Runtime': 'python3.14',
+          'Timeout': 30,
+          'TracingConfig': dict({
+            'Mode': 'Active',
+          }),
+        }),
+        'Type': 'AWS::Lambda::Function',
+      }),
+      'MailSlackLambdaFunctionServiceRole363AFC77': dict({
+        'Metadata': dict({
+          'cdk_nag': dict({
+            'rules_to_suppress': list([
+              dict({
+                'applies_to': list([
+                  'Policy::arn:<AWS::Partition>:iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
+                ]),
+                'id': 'AwsSolutions-IAM4',
+                'reason': 'AWSLambdaBasicExecutionRole is required for CloudWatch Logs access',
+              }),
+            ]),
+          }),
+        }),
+        'Properties': dict({
+          'AssumeRolePolicyDocument': dict({
+            'Statement': list([
+              dict({
+                'Action': 'sts:AssumeRole',
+                'Effect': 'Allow',
+                'Principal': dict({
+                  'Service': 'lambda.amazonaws.com',
+                }),
+              }),
+            ]),
+            'Version': '2012-10-17',
+          }),
+          'ManagedPolicyArns': list([
+            dict({
+              'Fn::Join': list([
+                '',
+                list([
+                  'arn:',
+                  dict({
+                    'Ref': 'AWS::Partition',
+                  }),
+                  ':iam::aws:policy/service-role/AWSLambdaBasicExecutionRole',
+                ]),
+              ]),
+            }),
+          ]),
+        }),
+        'Type': 'AWS::IAM::Role',
+      }),
+      'MailSlackLambdaFunctionServiceRoleDefaultPolicy02B5E815': dict({
+        'Metadata': dict({
+          'cdk_nag': dict({
+            'rules_to_suppress': list([
+              dict({
+                'applies_to': list([
+                  'Action::s3:GetBucket*',
+                  'Action::s3:GetObject*',
+                  'Action::s3:List*',
+                  dict({
+                    'regex': '/^Resource::<MailSlackS3Bucket[A-Z0-9]+\\.Arn>\\/ses-emails\\/\\*$/',
+                  }),
+                  'Resource::*',
+                ]),
+                'id': 'AwsSolutions-IAM5',
+                'reason': 'Wildcard permissions are generated by CDK grant_read() method for S3 operations and X-Ray tracing',
+              }),
+            ]),
+          }),
+        }),
+        'Properties': dict({
+          'PolicyDocument': dict({
+            'Statement': list([
+              dict({
+                'Action': list([
+                  'xray:PutTraceSegments',
+                  'xray:PutTelemetryRecords',
+                ]),
+                'Effect': 'Allow',
+                'Resource': '*',
+              }),
+              dict({
+                'Action': list([
+                  's3:GetObject*',
+                  's3:GetBucket*',
+                  's3:List*',
+                ]),
+                'Effect': 'Allow',
+                'Resource': list([
+                  dict({
+                    'Fn::GetAtt': list([
+                      'MailSlackS3Bucket43422984',
+                      'Arn',
+                    ]),
+                  }),
+                  dict({
+                    'Fn::Join': list([
+                      '',
+                      list([
+                        dict({
+                          'Fn::GetAtt': list([
+                            'MailSlackS3Bucket43422984',
+                            'Arn',
+                          ]),
+                        }),
+                        '/ses-emails/*',
+                      ]),
+                    ]),
+                  }),
+                ]),
+              }),
+              dict({
+                'Action': list([
+                  'secretsmanager:GetSecretValue',
+                  'secretsmanager:DescribeSecret',
+                ]),
+                'Effect': 'Allow',
+                'Resource': dict({
+                  'Ref': 'SlackBotTokenAD332752',
+                }),
+              }),
+            ]),
+            'Version': '2012-10-17',
+          }),
+          'PolicyName': 'MailSlackLambdaFunctionServiceRoleDefaultPolicy02B5E815',
+          'Roles': list([
+            dict({
+              'Ref': 'MailSlackLambdaFunctionServiceRole363AFC77',
+            }),
+          ]),
+        }),
+        'Type': 'AWS::IAM::Policy',
+      }),
+      'MailSlackLambdaLogGroup87F4D2C9': dict({
+        'DeletionPolicy': 'Delete',
+        'Properties': dict({
+          'RetentionInDays': 7,
+        }),
+        'Type': 'AWS::Logs::LogGroup',
+        'UpdateReplacePolicy': 'Delete',
+      }),
+      'MailSlackMxRecordE0D8E59A': dict({
+        'Properties': dict({
+          'HostedZoneId': 'DUMMY',
+          'Name': 'test.example.com.',
+          'ResourceRecords': list([
+            '10 inbound-smtp.us-east-1.amazonaws.com',
+          ]),
+          'TTL': '1800',
+          'Type': 'MX',
+        }),
+        'Type': 'AWS::Route53::RecordSet',
+      }),
+      'MailSlackRuleSet490EF285': dict({
+        'Properties': dict({
+          'RuleSetName': 'MailSlackRuleSet',
+        }),
+        'Type': 'AWS::SES::ReceiptRuleSet',
+      }),
+      'MailSlackRuleSetMailSlackRule599F8396': dict({
+        'DependsOn': list([
+          'MailSlackS3BucketPolicyA4FE1037',
+        ]),
+        'Properties': dict({
+          'Rule': dict({
+            'Actions': list([
+              dict({
+                'S3Action': dict({
+                  'BucketName': dict({
+                    'Ref': 'MailSlackS3Bucket43422984',
+                  }),
+                  'ObjectKeyPrefix': 'ses-emails/',
+                }),
+              }),
+            ]),
+            'Enabled': True,
+            'Recipients': list([
+              'test.example.com',
+            ]),
+            'ScanEnabled': True,
+            'TlsPolicy': 'Require',
+          }),
+          'RuleSetName': dict({
+            'Ref': 'MailSlackRuleSet490EF285',
+          }),
+        }),
+        'Type': 'AWS::SES::ReceiptRule',
+      }),
+      'MailSlackS3Bucket43422984': dict({
+        'DeletionPolicy': 'Delete',
+        'Properties': dict({
+          'BucketEncryption': dict({
+            'ServerSideEncryptionConfiguration': list([
+              dict({
+                'ServerSideEncryptionByDefault': dict({
+                  'SSEAlgorithm': 'AES256',
+                }),
+              }),
+            ]),
+          }),
+          'LifecycleConfiguration': dict({
+            'Rules': list([
+              dict({
+                'ExpirationInDays': 30,
+                'Id': 'DeleteAfter30Days',
+                'Status': 'Enabled',
+              }),
+            ]),
+          }),
+          'LoggingConfiguration': dict({
+            'DestinationBucketName': dict({
+              'Ref': 'MailSlackAccessLogBucket2A4C20AA',
+            }),
+            'LogFilePrefix': 'email-bucket-logs/',
+          }),
+          'PublicAccessBlockConfiguration': dict({
+            'BlockPublicAcls': True,
+            'BlockPublicPolicy': True,
+            'IgnorePublicAcls': True,
+            'RestrictPublicBuckets': True,
+          }),
+          'Tags': list([
+            dict({
+              'Key': 'aws-cdk:auto-delete-objects',
+              'Value': 'true',
+            }),
+          ]),
+        }),
+        'Type': 'AWS::S3::Bucket',
+        'UpdateReplacePolicy': 'Delete',
+      }),
+      'MailSlackS3BucketAllowBucketNotificationsToTestStackMailSlackLambdaFunction5773A9365E18B2D4': dict({
+        'Properties': dict({
+          'Action': 'lambda:InvokeFunction',
+          'FunctionName': dict({
+            'Fn::GetAtt': list([
+              'MailSlackLambdaFunctionA25E2BA2',
+              'Arn',
+            ]),
+          }),
+          'Principal': 's3.amazonaws.com',
+          'SourceAccount': '123456789012',
+          'SourceArn': dict({
+            'Fn::GetAtt': list([
+              'MailSlackS3Bucket43422984',
+              'Arn',
+            ]),
+          }),
+        }),
+        'Type': 'AWS::Lambda::Permission',
+      }),
+      'MailSlackS3BucketAutoDeleteObjectsCustomResource73A7BA46': dict({
+        'DeletionPolicy': 'Delete',
+        'DependsOn': list([
+          'MailSlackS3BucketPolicyA4FE1037',
+        ]),
+        'Properties': dict({
+          'BucketName': dict({
+            'Ref': 'MailSlackS3Bucket43422984',
+          }),
+          'ServiceToken': dict({
+            'Fn::GetAtt': list([
+              'CustomS3AutoDeleteObjectsCustomResourceProviderHandler9D90184F',
+              'Arn',
+            ]),
+          }),
+        }),
+        'Type': 'Custom::S3AutoDeleteObjects',
+        'UpdateReplacePolicy': 'Delete',
+      }),
+      'MailSlackS3BucketNotifications6717F511': dict({
+        'DependsOn': list([
+          'MailSlackS3BucketAllowBucketNotificationsToTestStackMailSlackLambdaFunction5773A9365E18B2D4',
+          'MailSlackS3BucketPolicyA4FE1037',
+        ]),
+        'Properties': dict({
+          'BucketName': dict({
+            'Ref': 'MailSlackS3Bucket43422984',
+          }),
+          'Managed': True,
+          'NotificationConfiguration': dict({
+            'LambdaFunctionConfigurations': list([
+              dict({
+                'Events': list([
+                  's3:ObjectCreated:*',
+                ]),
+                'Filter': dict({
+                  'Key': dict({
+                    'FilterRules': list([
+                      dict({
+                        'Name': 'prefix',
+                        'Value': 'ses-emails/',
+                      }),
+                    ]),
+                  }),
+                }),
+                'LambdaFunctionArn': dict({
+                  'Fn::GetAtt': list([
+                    'MailSlackLambdaFunctionA25E2BA2',
+                    'Arn',
+                  ]),
+                }),
+              }),
+            ]),
+          }),
+          'ServiceToken': dict({
+            'Fn::GetAtt': list([
+              'BucketNotificationsHandler050a0587b7544547bf325f094a3db8347ECC3691',
+              'Arn',
+            ]),
+          }),
+          'SkipDestinationValidation': False,
+        }),
+        'Type': 'Custom::S3BucketNotifications',
+      }),
+      'MailSlackS3BucketPolicyA4FE1037': dict({
+        'Properties': dict({
+          'Bucket': dict({
+            'Ref': 'MailSlackS3Bucket43422984',
+          }),
+          'PolicyDocument': dict({
+            'Statement': list([
+              dict({
+                'Action': 's3:*',
+                'Condition': dict({
+                  'Bool': dict({
+                    'aws:SecureTransport': 'false',
+                  }),
+                }),
+                'Effect': 'Deny',
+                'Principal': dict({
+                  'AWS': '*',
+                }),
+                'Resource': list([
+                  dict({
+                    'Fn::GetAtt': list([
+                      'MailSlackS3Bucket43422984',
+                      'Arn',
+                    ]),
+                  }),
+                  dict({
+                    'Fn::Join': list([
+                      '',
+                      list([
+                        dict({
+                          'Fn::GetAtt': list([
+                            'MailSlackS3Bucket43422984',
+                            'Arn',
+                          ]),
+                        }),
+                        '/*',
+                      ]),
+                    ]),
+                  }),
+                ]),
+              }),
+              dict({
+                'Action': list([
+                  's3:PutBucketPolicy',
+                  's3:GetBucket*',
+                  's3:List*',
+                  's3:DeleteObject*',
+                ]),
+                'Effect': 'Allow',
+                'Principal': dict({
+                  'AWS': dict({
+                    'Fn::GetAtt': list([
+                      'CustomS3AutoDeleteObjectsCustomResourceProviderRole3B1BD092',
+                      'Arn',
+                    ]),
+                  }),
+                }),
+                'Resource': list([
+                  dict({
+                    'Fn::GetAtt': list([
+                      'MailSlackS3Bucket43422984',
+                      'Arn',
+                    ]),
+                  }),
+                  dict({
+                    'Fn::Join': list([
+                      '',
+                      list([
+                        dict({
+                          'Fn::GetAtt': list([
+                            'MailSlackS3Bucket43422984',
+                            'Arn',
+                          ]),
+                        }),
+                        '/*',
+                      ]),
+                    ]),
+                  }),
+                ]),
+              }),
+              dict({
+                'Action': 's3:PutObject',
+                'Condition': dict({
+                  'StringEquals': dict({
+                    'aws:SourceAccount': dict({
+                      'Ref': 'AWS::AccountId',
+                    }),
+                  }),
+                }),
+                'Effect': 'Allow',
+                'Principal': dict({
+                  'Service': 'ses.amazonaws.com',
+                }),
+                'Resource': dict({
+                  'Fn::Join': list([
+                    '',
+                    list([
+                      dict({
+                        'Fn::GetAtt': list([
+                          'MailSlackS3Bucket43422984',
+                          'Arn',
+                        ]),
+                      }),
+                      '/ses-emails/*',
+                    ]),
+                  ]),
+                }),
+              }),
+            ]),
+            'Version': '2012-10-17',
+          }),
+        }),
+        'Type': 'AWS::S3::BucketPolicy',
+      }),
+      'SlackBotTokenAD332752': dict({
+        'DeletionPolicy': 'Delete',
+        'Metadata': dict({
+          'cdk_nag': dict({
+            'rules_to_suppress': list([
+              dict({
+                'id': 'AwsSolutions-SMG4',
+                'reason': 'Slack Bot Token is manually managed and does not require automatic rotation',
+              }),
+            ]),
+          }),
+        }),
+        'Properties': dict({
+          'Description': 'Slack Bot Token for email notifications',
+          'Name': 'MailSlack/SlackBotToken',
+          'SecretString': '{"SLACK_BOT_TOKEN":"PLACEHOLDER-REPLACE-WITH-ACTUAL-TOKEN"}',
+        }),
+        'Type': 'AWS::SecretsManager::Secret',
+        'UpdateReplacePolicy': 'Delete',
+      }),
+    }),
+    'Rules': dict({
+      'CheckBootstrapVersion': dict({
+        'Assertions': list([
+          dict({
+            'Assert': dict({
+              'Fn::Not': list([
+                dict({
+                  'Fn::Contains': list([
+                    list([
+                      '1',
+                      '2',
+                      '3',
+                      '4',
+                      '5',
+                    ]),
+                    dict({
+                      'Ref': 'BootstrapVersion',
+                    }),
+                  ]),
+                }),
+              ]),
+            }),
+            'AssertDescription': "CDK bootstrap stack version 6 required. Please run 'cdk bootstrap' with a recent version of the CDK CLI.",
+          }),
+        ]),
+      }),
+    }),
+  })
+# ---
