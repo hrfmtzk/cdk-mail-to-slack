@@ -1,0 +1,70 @@
+[tool.black]
+line-length = 88
+target-version = ['py313']
+exclude = '''
+/(
+    \.git
+  | __pycache__
+  | \.venv
+  | cdk\.out
+  | \.cdk\.staging
+)/
+'''
+
+[tool.isort]
+profile = "black"
+line_length = 88
+skip_gitignore = true
+extend_skip = ["cdk.out", ".cdk.staging"]
+combine_as_imports = true
+
+[tool.mypy]
+python_version = "3.13"
+strict = true
+warn_return_any = true
+warn_unused_configs = true
+disallow_untyped_defs = true
+exclude = [
+    "^cdk\\.out/",
+    "^\\.cdk\\.staging/"
+]
+
+[[tool.mypy.overrides]]
+module = "main"
+ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = "slack_sdk.*"
+ignore_missing_imports = true
+
+[tool.flake8]
+max-line-length = 88
+extend-ignore = ["E203", "W503"]
+exclude = [
+    ".git",
+    "__pycache__",
+    ".venv",
+    "cdk.out",
+    ".cdk.staging"
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["source/email_handler"]
+python_files = ["test_*.py"]
+python_classes = ["Test*"]
+python_functions = ["test_*"]
+addopts = [
+    "-v",
+    "--cov=cdk_mail_to_slack",
+    "--cov=source",
+    "--cov-report=term-missing",
+    "--cov-report=html",
+    "--cov-fail-under=80"
+]
+filterwarnings = [
+    "ignore:Typeguard cannot check.*protocol:UserWarning"
+]
+
+[tool.typeguard]
+packages = ["cdk_mail_to_slack", "source"]

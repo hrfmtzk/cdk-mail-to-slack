@@ -8,3 +8,13 @@ __pycache__
 # CDK asset staging directory
 .cdk.staging
 cdk.out
+
+# CDK context file (contains account ID and environment-specific data)
+cdk.context.json
+
+# Configuration file with sensitive data
+config.py
+
+# Test coverage reports
+.coverage
+htmlcov/

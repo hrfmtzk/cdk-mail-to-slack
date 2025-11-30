@@ -1,0 +1,13 @@
+{
+  // Suppress Pylance warnings for AWS CDK JSII-generated type definitions
+  // CDK's type definitions have parameter name mismatches that don't affect runtime
+  // 
+  // Alternative: Use inline comments in code:
+  //   actions=[ses_actions.S3(...)]  # type: ignore[arg-type]
+  //
+  // This setting suppresses the warning globally for this workspace
+  "python.analysis.typeCheckingMode": "basic",
+  "python.analysis.diagnosticSeverityOverrides": {
+    "reportArgumentType": "none"
+  }
+}

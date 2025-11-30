@@ -1,0 +1,34 @@
+# Configuration file for CDK Mail to Slack application
+# Copy this file to config.py and fill in your values
+
+# Domain name for receiving emails (e.g., "slackmailbot.your-domain.com")
+DOMAIN_NAME = "slackmailbot.your-domain.com"
+
+# Route 53 hosted zone name (e.g., "your-domain.com")
+HOSTED_ZONE_NAME = "your-domain.com"
+
+# Slack channel for error notifications (without # prefix)
+SLACK_ERROR_CHANNEL = "mail-errors"
+
+# Create MX record in Route 53 (True/False)
+# Set to False if MX record already exists or managed externally
+CREATE_MX_RECORD = True
+
+# Use existing SES receipt rule set (True/False)
+# Set to True to add rule to existing rule set instead of creating new one
+USE_EXISTING_RULE_SET = False
+
+# Optional: Existing rule set name (required if USE_EXISTING_RULE_SET=True)
+# EXISTING_RULE_SET_NAME = "my-existing-rule-set"
+
+# Optional: Insert rule after this rule name (only used if USE_EXISTING_RULE_SET=True)
+# Leave undefined or empty to add at the beginning of the rule set
+# INSERT_AFTER_RULE = "existing-rule-name"
+
+# Optional: Enable AWS X-Ray tracing (default: True)
+# Set to False to disable X-Ray tracing
+# ENABLE_XRAY_TRACING = True
+
+# Optional: Sentry DSN for error tracking
+# Leave undefined or empty to disable Sentry integration
+# SENTRY_DSN = "https://your-sentry-dsn@sentry.io/project-id"
