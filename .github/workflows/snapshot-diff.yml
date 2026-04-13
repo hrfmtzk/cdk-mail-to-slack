@@ -38,7 +38,7 @@ jobs:
           AWS_DEFAULT_REGION: us-east-1
 
       - name: Comment PR with snapshot status
-        uses: actions/github-script@v8
+        uses: actions/github-script@v9
         with:
           script: |
             const diff = `${{ steps.snapshot-check.outputs.diff }}`;
